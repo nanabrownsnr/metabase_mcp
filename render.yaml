@@ -1,0 +1,17 @@
+# Render deploy config (https://render.com/docs).
+# Render builds the Dockerfile; secrets come from the dashboard (Environment
+# Variables / Secrets) — never commit real values.
+services:
+  - type: web
+    name: metabase-mcp
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    # Env vars are set in the Render dashboard as secrets. Expected:
+    #   MONGODB_URI, DATABASE_NAME, ENCRYPTION_KEY,
+    #   ACCOUNT_SERVICE_URL, ACCOUNT_SERVICE_JWKS_ENDPOINT, ACCOUNT_SERVICE_JWKS_CACHE_TTL,
+    #   LICENSE_KEY, LICENSE_SERVER_BASE_URL, LICENSE_SERVER_JWKS_ENDPOINT,
+    #   LICENSE_SERVER_ACTIVATION_ENDPOINT, USAGE_REPORT_ENDPOINT,
+    #   PUBLIC_URL, ALLOWED_ORIGINS
+    envVars: []

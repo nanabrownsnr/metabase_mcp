@@ -1,0 +1,35 @@
+# Local dev / deploy orchestration.
+# Usage: docker compose up --build
+# Provide secrets via a local .env (never committed) or your platform's secrets.
+services:
+  metabase-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: metabase-mcp:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override PORT if needed; Dockerfile defaults to 8000.
+      PORT: "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # Optional local MongoDB for dev. Comment out if you use a managed Mongo.
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
