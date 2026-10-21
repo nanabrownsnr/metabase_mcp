@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Metabase MCP</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; background:#0b1020; color:#e6e9f5; }
+    h1 { font-size: 1.4rem; } .card { background:#141b33; padding:1rem; border-radius:10px; margin:0.5rem 0; }
+    .ok { color:#5dd39e; } .err { color:#ff8a8a; }
+    pre { background:#0f1530; padding:0.8rem; border-radius:8px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <h1>Metabase MCP</h1>
+  <div class="card" id="status">Waiting for tool result…</div>
+  <div class="card"><pre id="data">{}</pre></div>
+  <script>
+    window.addEventListener('message', (e) => {
+      const d = e.data && e.data.structuredContent;
+      if (!d) return;
+      const s = document.getElementById('status');
+      if (d.status === 'connected') { s.className = 'card ok'; s.textContent = 'Connected: ' + (d.user || 'ok'); }
+      else if (d.status === 'success') { s.className = 'card ok'; s.textContent = 'OK'; }
+      else if (d.status === 'error') { s.className = 'card err'; s.textContent = 'Error: ' + d.error; }
+      document.getElementById('data').textContent = JSON.stringify(d, null, 2);
+    });
+  </script>
+</body>
+</html>
