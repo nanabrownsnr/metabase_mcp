@@ -20,7 +20,7 @@ from app.config import settings
 @dataclass(frozen=True)
 class TwynityIdentity:
     user_id: str
-    persona_id: str
+    persona_id: str | None
 
 
 def get_auth_provider() -> JWTVerifier:
@@ -33,26 +33,42 @@ def get_auth_provider() -> JWTVerifier:
 
 
 async def get_identity(request: Request) -> TwynityIdentity:
-    """Verify a request JWT and require its trusted user ID plus Persona-Id.
+    """Verify a request JWT and resolve its trusted user ID.
 
-    Persona identity is request context supplied by Twynity, never a tool
-    argument. Missing or invalid identity fails closed.
+    ``persona_id`` is optional here — it is only needed when scoping a stored
+    connection. Tool calls work with a valid JWT alone; the configuration
+    (connect) routes use :func:`get_identity_require_persona` instead.
     """
     return await get_identity_from_headers(request.headers)
 
 
+async def get_identity_require_persona(request: Request) -> TwynityIdentity:
+    """Like :func:`get_identity` but fail closed without a ``Persona-Id``.
+
+    Used by the /api/v1/configuration routes: saving or reading a stored
+    Metabase connection requires a persona to scope it.
+    """
+    identity = await get_identity_from_headers(request.headers)
+    if not identity.persona_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Connecting a Metabase requires the '{settings.PERSONA_ID_HEADER}' header",
+        )
+    return identity
+
+
 async def get_identity_from_headers(headers: Mapping[str, str]) -> TwynityIdentity:
-    """Resolve trusted identity from HTTP/MCP headers using the same checks."""
+    """Resolve trusted identity from HTTP/MCP headers.
+
+    A valid Twynity bearer token is always required (401 without it).
+    ``Persona-Id`` is optional: when absent, ``persona_id`` is ``None`` so
+    callers can degrade to "no scoped connection" instead of a hard error.
+    """
     authorization = headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
     persona_id = headers.get(settings.PERSONA_ID_HEADER.lower())
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="A valid Twynity bearer token is required")
-    if not persona_id:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Authenticated request is missing the '{settings.PERSONA_ID_HEADER}' header",
-        )
 
     jwks_url = (
         f"{settings.ACCOUNT_SERVICE_URL.rstrip('/')}"
@@ -73,4 +89,5 @@ async def get_identity_from_headers(headers: Mapping[str, str]) -> TwynityIdenti
     user_id = claims.get("id") or claims.get("sub")
     if not isinstance(user_id, str) or not user_id.strip():
         raise HTTPException(status_code=401, detail="Verified token has no user identity claim")
+    persona_id = persona_id.strip() if isinstance(persona_id, str) and persona_id.strip() else None
     return TwynityIdentity(user_id=user_id, persona_id=persona_id)

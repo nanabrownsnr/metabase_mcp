@@ -63,11 +63,12 @@ def client():
         user_id = "u1"
         persona_id = "p1"
 
-    # twynity.py and tools/connection.py import get_active_store by name, so
-    # patch the references in those modules (not just the source module).
+    # twynity.py imports get_identity_require_persona by name for the
+    # connection routes; tools/connection.py imports get_identity_from_headers.
+    # Patch the references in those modules (not just the source module).
     with patch.object(twynity_mod, "get_active_store", return_value=store), \
          patch.object(conn_mod, "get_active_store", return_value=store), \
-         patch.object(twynity_mod, "get_identity", return_value=_Id()):
+         patch.object(twynity_mod, "get_identity_require_persona", return_value=_Id()):
         with TestClient(asgi) as tc:
             yield tc, store
 

@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from app.auth import get_identity
+from app.auth import get_identity, get_identity_require_persona
 from app.config import settings
 from app.connection_store import get_active_store
 
@@ -45,7 +45,7 @@ def register_routes(mcp):
 
     @mcp.custom_route("/api/v1/configuration", methods=["POST"])
     async def save_configuration(request: Request) -> JSONResponse:
-        identity = await get_identity(request)
+        identity = await get_identity_require_persona(request)
         try:
             payload = await request.json()
         except (ValueError, UnicodeDecodeError):
@@ -71,7 +71,7 @@ def register_routes(mcp):
 
     @mcp.custom_route("/api/v1/configuration", methods=["GET"])
     async def get_configuration(request: Request) -> JSONResponse:
-        identity = await get_identity(request)
+        identity = await get_identity_require_persona(request)
         store = get_active_store()
         if store is None:
             raise HTTPException(status_code=503, detail="Connection storage is not available")
@@ -81,7 +81,7 @@ def register_routes(mcp):
 
     @mcp.custom_route("/api/v1/external-connection/me", methods=["GET"])
     async def external_connection_me(request: Request) -> JSONResponse:
-        identity = await get_identity(request)
+        identity = await get_identity_require_persona(request)
         store = get_active_store()
         if store is None:
             raise HTTPException(status_code=503, detail="Connection storage is not available")
