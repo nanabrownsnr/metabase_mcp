@@ -80,8 +80,11 @@ async def get_identity_from_headers(headers: Mapping[str, str]) -> TwynityIdenti
             response.raise_for_status()
         header = jwt.get_unverified_header(token)
         key = next(key for key in response.json()["keys"] if key.get("kid") == header.get("kid"))
+        # No audience check: Twynity signs user JWTs for the platform, not per
+        # service. The transport JWTVerifier (get_auth_provider) also omits
+        # audience, so custom routes must match or they 401 on valid tokens.
         claims = jwt.decode(
-            token, key, algorithms=["RS256"], audience=settings.SERVICE_ID
+            token, key, algorithms=["RS256"]
         )
     except (httpx.HTTPError, KeyError, StopIteration, JWTError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="Twynity bearer token could not be verified") from exc

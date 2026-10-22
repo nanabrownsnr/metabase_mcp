@@ -101,9 +101,42 @@ async def get_dashboard(base_url: str, api_key: str, dashboard_id: int | str) ->
     return await _get(base_url, api_key, f"/dashboard/{dashboard_id}")
 
 
-async def run_card(base_url: str, api_key: str, card_id: int | str, params: dict | None = None) -> dict:
-    """Execute a saved question (card) and return its data."""
-    body: dict[str, Any] = {}
-    if params:
-        body["parameters"] = params
-    return await _post(base_url, api_key, f"/card/{card_id}/query", json_body=body)
+async def list_schemas(base_url: str, api_key: str, database_id: int | str) -> list[dict]:
+    """List schemas for a database (Metabase groups tables under schemas)."""
+    data = await _get(base_url, api_key, f"/database/{database_id}/metadata/tables")
+    return data.get("data", data) if isinstance(data, dict) else data
+
+
+async def list_tables(base_url: str, api_key: str, database_id: int | str) -> list[dict]:
+    """List all tables (with schemas) for a database.
+
+    Uses the same tables endpoint; returns the full list so the LLM can
+    discover what's available before writing SQL.
+    """
+    return await list_schemas(base_url, api_key, database_id)
+
+
+async def describe_table(base_url: str, api_key: str, table_id: int | str) -> dict:
+    """Fetch a table's columns (name, type, description) and flags."""
+    return await _get(base_url, api_key, f"/table/{table_id}")
+
+
+async def run_sql(
+    base_url: str,
+    api_key: str,
+    database_id: int | str,
+    sql: str,
+    max_rows: int = 5000,
+) -> dict:
+    """Run a native SQL query against a database via /api/dataset.
+
+    Returns the raw Metabase dataset response (columns + rows). The caller is
+    responsible for truncation/row-count reporting.
+    """
+    body: dict[str, Any] = {
+        "database": database_id,
+        "type": "native",
+        "query": sql,
+        "parameters": {},
+    }
+    return await _post(base_url, api_key, "/dataset", json_body=body)

@@ -1,11 +1,20 @@
 """Metabase MCP tools.
 
-Core read-only tools over the Metabase API, scoped to the connecting user's
+Read + query tools over the Metabase API, scoped to the connecting user's
 stored Metabase connection (base_url + api_key).
 
 Every tool returns a ToolResult. A missing/misconfigured connection is returned
 as an actionable error result (status=error), not raised, so the MCP client
 always gets a structured answer.
+
+Tool set (7):
+  - metabase_search     : search cards/dashboards/collections
+  - list_databases_tool : list connected databases
+  - list_dashboards_tool: list dashboards (optionally by collection)
+  - get_dashboard_tool  : fetch a dashboard + its cards
+  - list_tables_tool    : list schemas + tables for a database
+  - describe_table_tool : columns + types for a table
+  - run_sql             : run native SQL via /api/dataset (raw querying power)
 """
 
 from typing import Any, Dict, List, Optional
@@ -15,17 +24,22 @@ from fastmcp.tools import ToolResult
 
 from app.metabase_client import (
     MetabaseError,
+    describe_table,
     get_dashboard,
-    health,
     list_databases,
     list_dashboards,
-    run_card,
+    list_tables,
     search,
 )
+from app.metabase_client import run_sql as _run_sql_client
 from app.tools.connection import get_current_connection
 
 # Link tools to the Metabase UI resource when an MCP-Apps client is present.
 VIEW_URI = "ui://metabase/index.html"
+
+# Default cap on rows returned by run_sql (CFO trial balances can be large, but
+# unbounded results would blow up the model context). Override per-call.
+DEFAULT_MAX_ROWS = 5000
 
 
 def _app_config() -> AppConfig:
@@ -55,35 +69,15 @@ def _error_result(message: str, status_code: int | None = None) -> ToolResult:
     return ToolResult(content=message, structured_content=sc, meta=_meta())
 
 
+def _no_connection_result() -> ToolResult:
+    return _error_result(
+        "No Metabase connection configured. Use /api/v1/configuration to set "
+        "your Metabase base URL and API key."
+    )
+
+
 def register_tools(mcp):
     """Register the Metabase tools with the FastMCP server."""
-
-    @mcp.tool(app=_app_config())
-    async def check_metabase_connection() -> ToolResult:
-        """Verify the configured Metabase connection is valid and reachable.
-
-        Returns:
-            A ToolResult with the authenticated user's profile if the API key works.
-
-        Examples:
-            ``check_metabase_connection()``
-        """
-        try:
-            conn = await _connection()
-            if conn is None:
-                return _error_result(
-                    "No Metabase connection configured. Use /api/v1/configuration to set "
-                    "your Metabase base URL and API key."
-                )
-            profile = await health(conn["base_url"], conn["api_key"])
-            name = profile.get("first_name") or profile.get("email") or profile.get("id")
-            return ToolResult(
-                content=f"Metabase connection OK (authenticated as {name}).",
-                structured_content={"status": "connected", "user": name},
-                meta=_meta(),
-            )
-        except MetabaseError as e:
-            return _error_result(f"Metabase connection failed: {e}", e.status_code)
 
     @mcp.tool(app=_app_config())
     async def metabase_search(term: str, models: Optional[List[str]] = None) -> ToolResult:
@@ -103,10 +97,7 @@ def register_tools(mcp):
         try:
             conn = await _connection()
             if conn is None:
-                return _error_result(
-                    "No Metabase connection configured. Use /api/v1/configuration to set "
-                    "your Metabase base URL and API key."
-                )
+                return _no_connection_result()
             result = await search(conn["base_url"], conn["api_key"], term, models)
             rows = result.get("results", result) if isinstance(result, dict) else result
             count = len(rows) if isinstance(rows, list) else "some"
@@ -123,7 +114,8 @@ def register_tools(mcp):
         """List the databases connected to this Metabase instance.
 
         Returns:
-            A ToolResult with each database's id, name, and engine.
+            A ToolResult with each database's id, name, and engine. The id is
+            needed by list_tables_tool, describe_table_tool, and run_sql.
 
         Examples:
             ``list_databases_tool()``
@@ -131,10 +123,7 @@ def register_tools(mcp):
         try:
             conn = await _connection()
             if conn is None:
-                return _error_result(
-                    "No Metabase connection configured. Use /api/v1/configuration to set "
-                    "your Metabase base URL and API key."
-                )
+                return _no_connection_result()
             dbs = await list_databases(conn["base_url"], conn["api_key"])
             summary = [
                 {"id": d.get("id"), "name": d.get("name"), "engine": d.get("engine")}
@@ -165,10 +154,7 @@ def register_tools(mcp):
         try:
             conn = await _connection()
             if conn is None:
-                return _error_result(
-                    "No Metabase connection configured. Use /api/v1/configuration to set "
-                    "your Metabase base URL and API key."
-                )
+                return _no_connection_result()
             dashboards = await list_dashboards(conn["base_url"], conn["api_key"], collection_id)
             summary = [
                 {
@@ -203,10 +189,7 @@ def register_tools(mcp):
         try:
             conn = await _connection()
             if conn is None:
-                return _error_result(
-                    "No Metabase connection configured. Use /api/v1/configuration to set "
-                    "your Metabase base URL and API key."
-                )
+                return _no_connection_result()
             dashboard = await get_dashboard(conn["base_url"], conn["api_key"], dashboard_id)
             cards = dashboard.get("dashcards", [])
             card_ids = [c.get("card_id") for c in cards]
@@ -223,46 +206,164 @@ def register_tools(mcp):
             return _error_result(f"Failed to get dashboard {dashboard_id}: {e}", e.status_code)
 
     @mcp.tool(app=_app_config())
-    async def run_card_tool(card_id: int, parameters: Optional[Dict[str, Any]] = None) -> ToolResult:
-        """Execute a saved Metabase question (card) and return its data.
+    async def list_tables_tool(database_id: int) -> ToolResult:
+        """List the schemas and tables in a Metabase database.
 
-        This runs the card's underlying query and returns the rows — the
-        primary way for an LLM to answer data questions using vetted,
-        saved Metabase logic.
+        Use this to discover what tables exist (e.g. GL, journal entries,
+        accounts) before writing SQL. Returns each table's id, schema, name,
+        and row count.
 
         Args:
-            card_id: The Metabase card (saved question) id to run.
-            parameters: Optional map of Metabase parameter ids to values to
-                apply to the card (e.g. date filters).
+            database_id: The Metabase database id (from list_databases_tool).
 
         Returns:
-            A ToolResult with the query's columns and rows.
+            A ToolResult with the tables grouped by schema.
 
         Examples:
-            ``run_card_tool(card_id=7)``
-            ``run_card_tool(card_id=7, parameters={"card-7-date": "2026-10-01"})``
+            ``list_tables_tool(database_id=1)``
         """
         try:
             conn = await _connection()
             if conn is None:
-                return _error_result(
-                    "No Metabase connection configured. Use /api/v1/configuration to set "
-                    "your Metabase base URL and API key."
-                )
-            result = await run_card(conn["base_url"], conn["api_key"], card_id, parameters)
-            data = result.get("data", result) if isinstance(result, dict) else result
-            cols = [c.get("name") for c in data.get("cols", [])] if isinstance(data, dict) else []
-            rows = data.get("rows", []) if isinstance(data, dict) else []
+                return _no_connection_result()
+            tables = await list_tables(conn["base_url"], conn["api_key"], database_id)
+            # Group by schema for readability.
+            by_schema: Dict[str, List[Dict[str, Any]]] = {}
+            for t in tables:
+                schema = t.get("schema") or "public"
+                entry = {
+                    "id": t.get("id"),
+                    "name": t.get("name"),
+                    "display_name": t.get("display_name") or t.get("name"),
+                    "row_count": t.get("row_count"),
+                }
+                by_schema.setdefault(schema, []).append(entry)
+            flat = [
+                {"schema": schema, **t} for schema, ts in by_schema.items() for t in ts
+            ]
             return ToolResult(
-                content=f"Ran card {card_id}: {len(rows)} rows, columns: {cols}.",
+                content=f"Found {len(flat)} tables across {len(by_schema)} schemas in database {database_id}.",
                 structured_content={
                     "status": "success",
-                    "card_id": card_id,
-                    "columns": cols,
-                    "rows": rows,
-                    "data": data,
+                    "database_id": database_id,
+                    "tables_by_schema": by_schema,
+                    "tables": flat,
                 },
                 meta=_meta(),
             )
         except MetabaseError as e:
-            return _error_result(f"Failed to run card {card_id}: {e}", e.status_code)
+            return _error_result(f"Failed to list tables: {e}", e.status_code)
+
+    @mcp.tool(app=_app_config())
+    async def describe_table_tool(table_id: int) -> ToolResult:
+        """Describe a table's columns (name, type, description, flags).
+
+        Call this before writing SQL against a table so the LLM uses correct
+        column names and types.
+
+        Args:
+            table_id: The Metabase table id (from list_tables_tool).
+
+        Returns:
+            A ToolResult with the table's columns and metadata.
+
+        Examples:
+            ``describe_table_tool(table_id=42)``
+        """
+        try:
+            conn = await _connection()
+            if conn is None:
+                return _no_connection_result()
+            table = await describe_table(conn["base_url"], conn["api_key"], table_id)
+            fields = table.get("fields", [])
+            columns = [
+                {
+                    "id": f.get("id"),
+                    "name": f.get("name"),
+                    "display_name": f.get("display_name") or f.get("name"),
+                    "type": f.get("source_metadata", {}).get("type") or f.get("base_type"),
+                    "description": f.get("description"),
+                    "fiscal_type": f.get("fiscal_type"),
+                    "nullable": f.get("nullable"),
+                }
+                for f in fields
+            ]
+            return ToolResult(
+                content=f"Table '{table.get('display_name') or table.get('name')}' has {len(columns)} columns.",
+                structured_content={
+                    "status": "success",
+                    "table_id": table_id,
+                    "name": table.get("name"),
+                    "display_name": table.get("display_name"),
+                    "schema": table.get("schema"),
+                    "database_id": table.get("dbid"),
+                    "columns": columns,
+                },
+                meta=_meta(),
+            )
+        except MetabaseError as e:
+            return _error_result(f"Failed to describe table {table_id}: {e}", e.status_code)
+
+    @mcp.tool(app=_app_config())
+    async def run_sql(
+        database_id: int,
+        sql: str,
+        max_rows: int = DEFAULT_MAX_ROWS,
+    ) -> ToolResult:
+        """Run a native SQL query against a Metabase database.
+
+        This is the primary raw-querying tool: write SQL, get the rows back.
+        Ideal for financial analysis (trial balances, ledgers, P&L, balance
+        sheets). The query runs under the connecting user's Metabase
+        permissions.
+
+        Args:
+            database_id: The Metabase database id to query (from
+                list_databases_tool).
+            sql: The native SQL to run (SELECT recommended; the engine's
+                native query language, e.g. PostgreSQL/MySQL/SQL Server).
+            max_rows: Maximum rows to return (default 5000). Results beyond
+                this are truncated and flagged.
+
+        Returns:
+            A ToolResult with the query's columns, rows, row count,
+            truncation flag, and the SQL that ran (for audit).
+
+        Examples:
+            ``run_sql(database_id=1, sql="SELECT account, SUM(debit), SUM(credit) FROM gl_entries GROUP BY account")``
+        """
+        try:
+            conn = await _connection()
+            if conn is None:
+                return _no_connection_result()
+            result = await _run_sql_client(
+                conn["base_url"], conn["api_key"], database_id, sql, max_rows
+            )
+            data = result.get("data", result) if isinstance(result, dict) else result
+            cols_raw = data.get("cols", []) if isinstance(data, dict) else []
+            rows = data.get("rows", []) if isinstance(data, dict) else []
+            columns = [c.get("name") for c in cols_raw]
+            truncated = len(rows) >= max_rows
+            # Metabase also reports total size when available.
+            total = data.get("row_count") if isinstance(data, dict) else None
+            return ToolResult(
+                content=(
+                    f"Ran SQL on database {database_id}: {len(rows)} rows"
+                    + (f" (truncated at {max_rows})" if truncated else "")
+                    + f", columns: {columns}."
+                ),
+                structured_content={
+                    "status": "success",
+                    "database_id": database_id,
+                    "sql": sql,
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "total_row_count": total,
+                    "truncated": truncated,
+                    "max_rows": max_rows,
+                },
+                meta=_meta(),
+            )
+        except MetabaseError as e:
+            return _error_result(f"SQL query failed: {e}", e.status_code)

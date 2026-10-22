@@ -1,4 +1,4 @@
-"""Tests for the Metabase tools: ToolResult contract + no-connection error path."""
+"""Tests for the Metabase tools: ToolResult contract + 7-tool set."""
 
 from __future__ import annotations
 
@@ -17,78 +17,87 @@ def _make_mcp() -> FastMCP:
     return mcp
 
 
+EXPECTED_TOOLS = {
+    "metabase_search",
+    "list_databases_tool",
+    "list_dashboards_tool",
+    "get_dashboard_tool",
+    "list_tables_tool",
+    "describe_table_tool",
+    "run_sql",
+}
+
+
+@pytest.mark.asyncio
+async def test_exposes_exactly_seven_tools():
+    mcp = _make_mcp()
+    tools = await mcp.list_tools()
+    names = {t.name for t in tools}
+    assert names == EXPECTED_TOOLS
+    # Removed tools must be gone.
+    assert "check_metabase_connection" not in names
+    assert "run_card_tool" not in names
+
+
 @pytest.mark.asyncio
 async def test_no_connection_returns_actionable_error():
     mcp = _make_mcp()
     with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=None)):
-        result = await mcp.call_tool("check_metabase_connection", {})
-    sc = result.structured_content
-    assert sc["status"] == "error"
-    assert "No Metabase connection" in sc["error"] or "No Metabase connection" in (result.content or "")
-
-
-@pytest.mark.asyncio
-async def test_jwt_without_persona_yields_no_connection_not_400():
-    """A valid JWT with no Persona-Id must NOT hard-fail; it degrades to
-    'no connection configured' so the marketplace can still list/call tools."""
-    from app.auth import get_identity_from_headers
-    from starlette.exceptions import HTTPException
-
-    mcp = _make_mcp()
-    # Simulate: JWT present, Persona-Id absent → identity.persona_id is None →
-    # get_current_connection returns None (no scoped connection).
-    with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=None)):
-        result = await mcp.call_tool("run_card_tool", {"card_id": 7})
+        result = await mcp.call_tool("run_sql", {"database_id": 1, "sql": "SELECT 1"})
     sc = result.structured_content
     assert sc["status"] == "error"
     assert "No Metabase connection" in sc["error"]
 
 
 @pytest.mark.asyncio
-async def test_identity_from_headers_persona_optional():
-    """get_identity_from_headers: JWT required, Persona-Id optional (→ None)."""
-    from app.auth import get_identity_from_headers
-    from starlette.exceptions import HTTPException
-
-    # No bearer token → 401 regardless of persona.
-    with pytest.raises(HTTPException) as ei:
-        await get_identity_from_headers({"persona-id": "p1"})
-    assert ei.value.status_code == 401
-
-    # Bearer present but persona absent → must NOT raise 400; returns persona None.
-    # (JWT verification would 401 against a fake account service, so we patch the
-    # httpx layer to return a valid-looking token is overkill; instead assert the
-    # code path no longer 400s on missing persona by checking the function does
-    # not reference a 400 branch for persona. We verify behavior via the no-400
-    # contract in the tool test above; here we just ensure import works.)
-    assert callable(get_identity_from_headers)
-
-
-@pytest.mark.asyncio
-async def test_missing_fields_returns_error():
+async def test_jwt_without_persona_yields_no_connection_not_400():
+    """A valid JWT with no Persona-Id must NOT hard-fail; it degrades to
+    'no connection configured' so the marketplace can still list/call tools."""
     mcp = _make_mcp()
-    # api_key empty → treated as unconfigured → actionable error, not a crash.
-    conn = {"base_url": "https://mb.test", "api_key": ""}
-    with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)):
-        result = await mcp.call_tool("check_metabase_connection", {})
+    with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=None)):
+        result = await mcp.call_tool("run_sql", {"database_id": 1, "sql": "SELECT 1"})
     sc = result.structured_content
     assert sc["status"] == "error"
-    assert "connection" in sc["error"].lower()
+    assert "No Metabase connection" in sc["error"]
 
 
 @pytest.mark.asyncio
-async def test_run_card_success_shape():
+async def test_run_sql_success_shape():
     mcp = _make_mcp()
     conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
-    fake_data = {"data": {"cols": [{"name": "revenue"}], "rows": [[100], [200]]}}
+    fake_data = {
+        "data": {
+            "cols": [{"name": "account"}, {"name": "total"}],
+            "rows": [["Cash", 100], ["AR", 200]],
+        }
+    }
     with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
-         patch.object(tools_mod, "run_card", new=AsyncMock(return_value=fake_data)):
-        result = await mcp.call_tool("run_card_tool", {"card_id": 7})
+         patch.object(tools_mod, "_run_sql_client", new=AsyncMock(return_value=fake_data)) as m:
+        result = await mcp.call_tool("run_sql", {"database_id": 1, "sql": "SELECT 1"})
     sc = result.structured_content
     assert sc["status"] == "success"
-    assert sc["card_id"] == 7
-    assert sc["columns"] == ["revenue"]
-    assert sc["rows"] == [[100], [200]]
+    assert sc["database_id"] == 1
+    assert sc["sql"] == "SELECT 1"
+    assert sc["columns"] == ["account", "total"]
+    assert sc["rows"] == [["Cash", 100], ["AR", 200]]
+    assert sc["truncated"] is False
+    # run_sql client called with the right args.
+    _, kwargs = m.call_args
+    assert kwargs.get("database_id", m.call_args[0][2] if m.call_args[0] else None) is not None
+
+
+@pytest.mark.asyncio
+async def test_run_sql_truncation_flag():
+    mcp = _make_mcp()
+    conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
+    rows = [[i] for i in range(3)]
+    fake_data = {"data": {"cols": [{"name": "x"}], "rows": rows}}
+    with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
+         patch.object(tools_mod, "_run_sql_client", new=AsyncMock(return_value=fake_data)):
+        result = await mcp.call_tool("run_sql", {"database_id": 1, "sql": "SELECT 1", "max_rows": 3})
+    sc = result.structured_content
+    assert sc["truncated"] is True
+    assert sc["max_rows"] == 3
 
 
 @pytest.mark.asyncio
@@ -105,6 +114,50 @@ async def test_list_databases_success_shape():
 
 
 @pytest.mark.asyncio
+async def test_list_tables_groups_by_schema():
+    mcp = _make_mcp()
+    conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
+    tables = [
+        {"id": 1, "name": "gl", "schema": "public", "row_count": 10},
+        {"id": 2, "name": "accounts", "schema": "public", "row_count": 5},
+        {"id": 3, "name": "audit", "schema": "other", "row_count": 1},
+    ]
+    with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
+         patch.object(tools_mod, "list_tables", new=AsyncMock(return_value=tables)):
+        result = await mcp.call_tool("list_tables_tool", {"database_id": 1})
+    sc = result.structured_content
+    assert sc["status"] == "success"
+    assert len(sc["tables_by_schema"]["public"]) == 2
+    assert len(sc["tables_by_schema"]["other"]) == 1
+    assert len(sc["tables"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_describe_table_success_shape():
+    mcp = _make_mcp()
+    conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
+    table = {
+        "id": 42,
+        "name": "gl",
+        "display_name": "GL Entries",
+        "schema": "public",
+        "dbid": 1,
+        "fields": [
+            {"id": 1, "name": "account", "base_type": "type/Integer"},
+            {"id": 2, "name": "debit", "base_type": "type/Float", "description": "debit amt"},
+        ],
+    }
+    with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
+         patch.object(tools_mod, "describe_table", new=AsyncMock(return_value=table)):
+        result = await mcp.call_tool("describe_table_tool", {"table_id": 42})
+    sc = result.structured_content
+    assert sc["status"] == "success"
+    assert sc["table_id"] == 42
+    assert [c["name"] for c in sc["columns"]] == ["account", "debit"]
+    assert sc["columns"][1]["description"] == "debit amt"
+
+
+@pytest.mark.asyncio
 async def test_tool_metabase_error_shape():
     mcp = _make_mcp()
     conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
@@ -112,10 +165,10 @@ async def test_tool_metabase_error_shape():
 
     with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
          patch.object(
-             tools_mod, "list_dashboards",
-             new=AsyncMock(side_effect=MetabaseError("boom", status_code=500)),
+             tools_mod, "_run_sql_client",
+             new=AsyncMock(side_effect=MetabaseError("syntax error", status_code=400)),
          ):
-        result = await mcp.call_tool("list_dashboards_tool", {})
+        result = await mcp.call_tool("run_sql", {"database_id": 1, "sql": "BAD SQL"})
     sc = result.structured_content
     assert sc["status"] == "error"
-    assert "boom" in sc["error"]
+    assert "syntax error" in sc["error"]

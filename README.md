@@ -5,12 +5,14 @@ Metabase instance with a **base URL + API key**, stored encrypted in MongoDB,
 scoped to `(user_id, persona_id)`.
 
 ## Tools
-- `check_metabase_connection` — verify the API key works
 - `metabase_search` — search cards/dashboards/collections
 - `list_databases_tool` — list connected databases
 - `list_dashboards_tool` — list dashboards (optionally by collection)
 - `get_dashboard_tool` — fetch a dashboard + its cards
-- `run_card_tool` — run a saved question and return rows
+- `list_tables_tool` — list schemas + tables in a database
+- `describe_table_tool` — columns + types for a table
+- `run_sql` — **run native SQL via /api/dataset** (raw querying power for financial analysis: trial balances, ledgers, P&L, balance sheets)
+
 
 ## Auth model
 - FastMCP `JWTVerifier` protects the MCP transport (Twynity bearer + Persona-Id).
