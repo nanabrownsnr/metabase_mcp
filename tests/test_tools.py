@@ -207,10 +207,15 @@ async def test_only_get_dashboard_has_ui():
 async def test_get_dashboard_result_carries_ui_meta():
     """get_dashboard_tool's success ToolResult carries the ui resourceUri in
     meta so an MCP-Apps client renders the dashboard; other tools' results do
-    not."""
+    not. It also exposes the live embed URL for publicly-shared dashboards."""
     mcp = _make_mcp()
     conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
-    fake_dash = {"id": 7, "name": "KPI", "dashcards": [{"card_id": 42, "name": "Revenue"}]}
+    fake_dash = {
+        "id": 7, "name": "KPI",
+        "uuid": "abcd-1234",
+        "public_url": "/public/dashboard/abcd-1234",
+        "dashcards": [{"card_id": 42, "name": "Revenue"}],
+    }
     with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
          patch.object(tools_mod, "get_dashboard", new=AsyncMock(return_value=fake_dash)):
         result = await mcp.call_tool("get_dashboard_tool", {"dashboard_id": 7})
@@ -218,3 +223,8 @@ async def test_get_dashboard_result_carries_ui_meta():
     # The UI resource URI should be advertised in meta.
     meta_str = str(meta)
     assert "ui://metabase/index.html" in meta_str, f"expected UI URI in meta, got {meta}"
+    # The live embed URL should be built from base_url + uuid.
+    sc = result.structured_content
+    assert sc["embed_url"] == "https://mb.test/public/dashboard/abcd-1234"
+    assert sc["public"] is True
+    assert sc["uuid"] == "abcd-1234"

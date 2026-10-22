@@ -206,12 +206,31 @@ def register_tools(mcp):
             dashboard = await get_dashboard(conn["base_url"], conn["api_key"], dashboard_id)
             cards = dashboard.get("dashcards", [])
             card_ids = [c.get("card_id") for c in cards]
+            # Build the live embed URL for the UI. Metabase's /public/dashboard
+            # route is iframe-able (no X-Frame-Options DENY, frame-ancestors *),
+            # so the MCP App UI renders the real dashboard when it's publicly
+            # shared. The dashboard is publicly shared when it has a uuid and
+            # public_url (Metabase sets these when the dashboard is shared).
+            uuid = dashboard.get("uuid")
+            base = conn["base_url"].rstrip("/")
+            public = bool(dashboard.get("public_url") or uuid)
+            embed_url = f"{base}/public/dashboard/{uuid}" if uuid else None
             return ToolResult(
-                content=f"Dashboard '{dashboard.get('name')}' has {len(card_ids)} cards: {card_ids}.",
+                content=(
+                    f"Dashboard '{dashboard.get('name')}' has {len(card_ids)} cards: {card_ids}."
+                    + (f" Live embed: {embed_url}" if embed_url else "")
+                ),
                 structured_content={
                     "status": "success",
                     "dashboard": dashboard,
                     "card_ids": card_ids,
+                    "name": dashboard.get("name"),
+                    "description": dashboard.get("description"),
+                    "dashcards": cards,
+                    "parameters": dashboard.get("parameters", []),
+                    "uuid": uuid,
+                    "public": public,
+                    "embed_url": embed_url,
                 },
                 meta=_meta(),
             )

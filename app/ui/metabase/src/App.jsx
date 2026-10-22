@@ -1,7 +1,7 @@
-// Metabase dashboard MCP App: renders a dashboard as-is (grid of cards).
-// The tool get_dashboard_tool returns structured_content with the dashboard's
-// name, dashcards (each with card_id, name, visualization_type, size), and
-// parameters/filters. This component lays them out on the 12-column grid.
+// Metabase dashboard MCP App: renders the LIVE dashboard via iframe when it's
+// publicly shared (Metabase's /public/dashboard route is iframe-able), and
+// falls back to a structural grid (card positions/sizes/viz types) when the
+// dashboard isn't public.
 import React, { useCallback, useState } from "react";
 import {
     useApp,
@@ -10,34 +10,13 @@ import {
     useHostStyleVariables,
 } from "@modelcontextprotocol/ext-apps/react";
 
-// Map Metabase viz types to a small label + emoji so the card is recognizable
-// without rendering the actual chart (we only have metadata, not pixels).
 const VIZ_LABELS = {
-    table: ["Table", "▦"],
-    bar: ["Bar chart", "▁▂▃▅"],
-    line: ["Line chart", "⤳"],
-    pie: ["Pie chart", "◔"],
-    scatter: ["Scatter", "⁘"],
-    area: ["Area chart", "⬒"],
-    gauge: ["Gauge", "◕"],
-    row: ["Row", "▬"],
-    combo: ["Combo chart", "▆"],
-    pivot: ["Pivot table", "⊞"],
-    scalar: ["Scalar", "◆"],
-    smartscalar: ["Smart scalar", "✦"],
-    progress: ["Progress", "▰"],
-    funnel: ["Funnel", "▼"],
-    map: ["Map", "◍"],
-    waterfall: ["Waterfall", "◫"],
-    sankey: ["Sankey", "⇶"],
-    "map-point": ["Map point", "◉"],
-    "map-area": ["Map area", "▣"],
-    "map-grid": ["Map grid", "▩"],
-    "map-bubble": ["Map bubble", "◍"],
-    "map-geography": ["Map geography", "⊕"],
-    "map-routes": ["Map routes", "⤳"],
-    "map-heat": ["Map heat", "▤"],
-    "map-cluster": ["Map cluster", "⁘"],
+    table: ["Table", "▦"], bar: ["Bar chart", "▁▂▃▅"], line: ["Line chart", "⤳"],
+    pie: ["Pie chart", "◔"], scatter: ["Scatter", "⁘"], area: ["Area chart", "⬒"],
+    gauge: ["Gauge", "◕"], row: ["Row", "▬"], combo: ["Combo chart", "▆"],
+    pivot: ["Pivot table", "⊞"], scalar: ["Scalar", "◆"], smartscalar: ["Smart scalar", "✦"],
+    progress: ["Progress", "▰"], funnel: ["Funnel", "▼"], map: ["Map", "◍"],
+    waterfall: ["Waterfall", "◫"], sankey: ["Sankey", "⇶"],
 };
 
 function vizInfo(vizType) {
@@ -49,9 +28,9 @@ export default function MetabaseDashboardApp() {
     const [dashboard, setDashboard] = useState(null);
     const [hasResult, setHasResult] = useState(false);
     const [error, setError] = useState(null);
+    const [iframeFailed, setIframeFailed] = useState(false);
 
     const onAppCreated = useCallback((createdApp) => {
-        // The host delivers the linked tool result (get_dashboard_tool) here.
         createdApp.ontoolresult = (result) => {
             const sc = result.structuredContent;
             if (!sc || sc.status === "error") {
@@ -60,15 +39,16 @@ export default function MetabaseDashboardApp() {
                 setHasResult(true);
                 return;
             }
-            // Normalize dashcards: each has card_id, name, visualization_type,
-            // and size [col_span, row_span].
-            const dashcards = sc.dashcards || sc.cards || [];
             setDashboard({
-                name: sc.name || "Dashboard",
-                description: sc.description || "",
-                dashcards: dashcards,
-                parameters: sc.parameters || [],
+                name: sc.name || sc.dashboard?.name || "Dashboard",
+                description: sc.description || sc.dashboard?.description || "",
+                dashcards: sc.dashcards || sc.dashboard?.dashcards || [],
+                parameters: sc.parameters || sc.dashboard?.parameters || [],
+                uuid: sc.uuid || sc.dashboard?.uuid || null,
+                public: sc.public,
+                embed_url: sc.embed_url,
             });
+            setIframeFailed(false);
             setHasResult(true);
             setError(null);
         };
@@ -85,7 +65,32 @@ export default function MetabaseDashboardApp() {
     useHostFonts(app, app?.getHostContext());
     const theme = useDocumentTheme();
 
-    // Render state.
+    // Live embed: iframe the real Metabase dashboard. We can't reliably detect
+    // an iframe load failure cross-origin, so we offer a "show layout instead"
+    // toggle that the user can tap if the embed doesn't load (e.g. not public).
+    if (dashboard && dashboard.embed_url && !iframeFailed) {
+        return (
+            <main className="embed-view" data-host-theme={theme} aria-label={dashboard.name}>
+                <header className="embed-header">
+                    <h1>{dashboard.name}</h1>
+                    {dashboard.description && <p className="desc">{dashboard.description}</p>}
+                    <button className="layout-toggle" onClick={() => setIframeFailed(true)}>
+                        Show layout instead
+                    </button>
+                </header>
+                <iframe
+                    className="live-dashboard"
+                    src={dashboard.embed_url}
+                    title={dashboard.name}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
+                />
+            </main>
+        );
+    }
+
+    // Fallback (or no embed_url): structural grid of cards.
     let body;
     if (connError) {
         body = <p className="error">Unable to connect to the MCP client: {connError.message}</p>;
@@ -101,6 +106,12 @@ export default function MetabaseDashboardApp() {
                 <header className="dashboard-header">
                     <h1>{dashboard.name}</h1>
                     {dashboard.description && <p className="desc">{dashboard.description}</p>}
+                    {dashboard.embed_url && !dashboard.public && (
+                        <p className="note">
+                            This dashboard isn't publicly shared, so the live embed is unavailable.
+                            Share it publicly in Metabase to see it here.
+                        </p>
+                    )}
                 </header>
                 {dashboard.parameters.length > 0 && (
                     <div className="params">
