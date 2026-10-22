@@ -14,11 +14,16 @@ __pycache__/
 logs/
 *.log
 
-# Venv / build
+# Venv / build / node
 .venv/
 venv/
 build/
+node_modules/
 dist/
+# But DO commit the built Metabase UI (Render serves dist/index.html directly;
+# the Dockerfile does not run npm build).
+!app/ui/metabase/dist/
+!app/ui/metabase/dist/index.html
 
 # OS
 .DS_Store

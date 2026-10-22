@@ -79,7 +79,7 @@ def _error_result(message: str, status_code: int | None = None) -> ToolResult:
     sc: Dict[str, Any] = {"status": "error", "error": message}
     if status_code is not None:
         sc["status_code"] = status_code
-    return ToolResult(content=message, structured_content=sc, meta=_meta())
+    return ToolResult(content=message, structured_content=sc)
 
 
 def _no_connection_result() -> ToolResult:
@@ -92,7 +92,7 @@ def _no_connection_result() -> ToolResult:
 def register_tools(mcp):
     """Register the Metabase tools with the FastMCP server."""
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def metabase_search(term: str, models: Optional[List[str]] = None) -> ToolResult:
         """Search Metabase for cards, dashboards, collections, and more.
 
@@ -117,12 +117,12 @@ def register_tools(mcp):
             return ToolResult(
                 content=f"Found {count} Metabase results for '{term}'.",
                 structured_content={"status": "success", "term": term, "results": rows},
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Metabase search failed: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def list_databases_tool() -> ToolResult:
         """List the databases connected to this Metabase instance.
 
@@ -145,12 +145,12 @@ def register_tools(mcp):
             return ToolResult(
                 content=f"Found {len(summary)} databases in Metabase.",
                 structured_content={"status": "success", "databases": summary},
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to list databases: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def list_dashboards_tool(collection_id: Optional[int] = None) -> ToolResult:
         """List dashboards, optionally filtered to a single collection.
 
@@ -181,7 +181,7 @@ def register_tools(mcp):
             return ToolResult(
                 content=f"Found {len(summary)} dashboards in Metabase.",
                 structured_content={"status": "success", "dashboards": summary},
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to list dashboards: {e}", e.status_code)
@@ -218,7 +218,7 @@ def register_tools(mcp):
         except MetabaseError as e:
             return _error_result(f"Failed to get dashboard {dashboard_id}: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def list_tables_tool(database_id: int) -> ToolResult:
         """List the schemas and tables in a Metabase database.
 
@@ -262,12 +262,12 @@ def register_tools(mcp):
                     "tables_by_schema": by_schema,
                     "tables": flat,
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to list tables: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def describe_table_tool(table_id: int) -> ToolResult:
         """Describe a table's columns (name, type, description, flags).
 
@@ -312,12 +312,12 @@ def register_tools(mcp):
                     "database_id": table.get("dbid"),
                     "columns": columns,
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to describe table {table_id}: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def run_sql(
         database_id: int,
         sql: str,
@@ -378,12 +378,12 @@ def register_tools(mcp):
                     "truncated": truncated,
                     "max_rows": max_rows,
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"SQL query failed: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def preview_table_tool(table_id: int, max_rows: int = 10) -> ToolResult:
         """Sample the first N rows of a table to understand its data shape.
 
@@ -418,12 +418,12 @@ def register_tools(mcp):
                     "rows": rows,
                     "row_count": len(rows),
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to preview table {table_id}: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def save_question_tool(
         name: str,
         database_id: int,
@@ -478,12 +478,12 @@ def register_tools(mcp):
                     "collection_id": collection_id,
                     "url": card.get("url"),
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to save question: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def create_dashboard_tool(
         name: str,
         collection_id: Optional[int] = None,
@@ -524,12 +524,12 @@ def register_tools(mcp):
                     "collection_id": collection_id,
                     "url": dash.get("url"),
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to create dashboard: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def add_dashboard_card_tool(
         dashboard_id: int,
         card_id: int,
@@ -576,12 +576,12 @@ def register_tools(mcp):
                     "viz_type": viz_type,
                     "size": [col_span, row_span],
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to add card to dashboard: {e}", e.status_code)
 
-    @mcp.tool(app=_app_config())
+    @mcp.tool()
     async def create_collection_tool(
         name: str,
         parent_id: Optional[int] = None,
@@ -617,7 +617,7 @@ def register_tools(mcp):
                     "name": name,
                     "parent_id": parent_id,
                 },
-                meta=_meta(),
+                
             )
         except MetabaseError as e:
             return _error_result(f"Failed to create collection: {e}", e.status_code)

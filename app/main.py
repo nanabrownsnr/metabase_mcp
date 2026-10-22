@@ -22,6 +22,7 @@ from app.connection_store import ConnectionStore, set_active_store
 from app.license import license_watcher
 from app.tools.metabase import register_tools as register_metabase_tools
 from app.twynity import register_routes
+from app.ui.metabase.resource import register_resource
 from app.usage import save_usage_report
 
 logger = getLogger(__name__)
@@ -74,6 +75,9 @@ class UsageTrackingMiddleware(MCPMiddleware):
 
 
 mcp.add_middleware(UsageTrackingMiddleware())
+
+# Register the Metabase dashboard UI (the only tool with a UI: get_dashboard_tool).
+register_resource(mcp)
 
 register_routes(mcp)
 

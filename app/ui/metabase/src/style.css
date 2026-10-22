@@ -1,0 +1,147 @@
+/* Host-aware presentation for the Metabase dashboard MCP App.
+   Preserves responsive sizing and host-variable fallbacks (template convention). */
+:root {
+    color-scheme: light dark;
+    font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+    background: var(--color-background-primary, transparent);
+    color: var(--color-text-primary, CanvasText);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+}
+
+html {
+    height: 100%;
+}
+
+body {
+    min-height: max(16rem, 100dvh);
+    display: flex;
+    background: transparent;
+}
+
+#root {
+    display: flex;
+    flex: 1;
+    width: 100%;
+    min-height: inherit;
+}
+
+.view {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: 100%;
+    min-height: inherit;
+    padding: clamp(0.75rem, 3vw, 1.75rem);
+    background: var(--color-background-primary, Canvas);
+}
+
+.status,
+.error {
+    margin: auto;
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--color-text-secondary, GrayText);
+}
+
+.error {
+    color: var(--color-text-danger, #ff8a8a);
+}
+
+.dashboard-header h1 {
+    margin: 0 0 0.25rem;
+    font-size: clamp(1.25rem, 4vw, 2rem);
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+.desc {
+    margin: 0 0 1rem;
+    color: var(--color-text-secondary, GrayText);
+    font-size: 0.9rem;
+}
+
+.params {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.param-chip {
+    padding: 0.25rem 0.625rem;
+    border: 1px solid var(--color-border-primary, color-mix(in srgb, CanvasText 18%, transparent));
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text-secondary, GrayText);
+    background: var(--color-background-secondary, color-mix(in srgb, CanvasText 4%, transparent));
+}
+
+/* The dashboard grid: 12 columns, auto-rows sized to the grid units. */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    grid-auto-rows: minmax(3.5rem, auto);
+    gap: 0.75rem;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.75rem;
+    border: 1px solid var(--color-border-primary, color-mix(in srgb, CanvasText 18%, transparent));
+    border-radius: var(--border-radius-lg, 0.75rem);
+    background: var(--color-background-secondary, Canvas);
+    box-shadow: 0 0.375rem 1rem color-mix(in srgb, CanvasText 8%, transparent);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.card-glyph {
+    font-size: clamp(1.5rem, 4vw, 2.25rem);
+    line-height: 1;
+    color: var(--color-text-secondary, GrayText);
+    opacity: 0.85;
+}
+
+.card-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-align: center;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.card-viz {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-secondary, GrayText);
+    opacity: 0.8;
+}
+
+@media (max-width: 30rem) {
+    .grid {
+        grid-template-columns: repeat(6, 1fr);
+    }
+    .card {
+        /* On narrow screens, span the full 6-col width regardless of size hint. */
+        grid-column: span 6 !important;
+    }
+}

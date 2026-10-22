@@ -177,3 +177,44 @@ async def test_tool_metabase_error_shape():
     sc = result.structured_content
     assert sc["status"] == "error"
     assert "syntax error" in sc["error"]
+
+
+# ---------------------------------------------------------------------------
+# UI wiring: only get_dashboard_tool has the Metabase dashboard UI resource
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_only_get_dashboard_has_ui():
+    """get_dashboard_tool is the ONLY tool linked to the UI resource; every
+    other tool must not carry the UI. FastMCP exposes the link on the tool's
+    ``meta`` field (the AppConfig becomes meta.ui.resourceUri)."""
+    mcp = _make_mcp()
+    tools = await mcp.list_tools()
+    by_name = {t.name: t for t in tools}
+    assert "get_dashboard_tool" in by_name
+    for name, tool in by_name.items():
+        meta = tool.meta or {}
+        uri = (meta.get("ui") or {}).get("resourceUri") if isinstance(meta.get("ui"), dict) else None
+        has_ui = bool(uri)
+        if name == "get_dashboard_tool":
+            assert has_ui, "get_dashboard_tool should be linked to the UI resource"
+            assert uri == "ui://metabase/index.html", f"unexpected UI uri: {uri}"
+        else:
+            assert not has_ui, f"{name} should NOT be linked to a UI resource (meta={meta})"
+
+
+@pytest.mark.asyncio
+async def test_get_dashboard_result_carries_ui_meta():
+    """get_dashboard_tool's success ToolResult carries the ui resourceUri in
+    meta so an MCP-Apps client renders the dashboard; other tools' results do
+    not."""
+    mcp = _make_mcp()
+    conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
+    fake_dash = {"id": 7, "name": "KPI", "dashcards": [{"card_id": 42, "name": "Revenue"}]}
+    with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
+         patch.object(tools_mod, "get_dashboard", new=AsyncMock(return_value=fake_dash)):
+        result = await mcp.call_tool("get_dashboard_tool", {"dashboard_id": 7})
+    meta = result.meta or {}
+    # The UI resource URI should be advertised in meta.
+    meta_str = str(meta)
+    assert "ui://metabase/index.html" in meta_str, f"expected UI URI in meta, got {meta}"

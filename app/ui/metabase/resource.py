@@ -1,24 +1,33 @@
-"""UI resource for Replicate MCP integration."""
+"""Register and serve the compiled UI resource for the Metabase dashboard viewer.
 
-import os
+The only tool with a UI is get_dashboard_tool; the UI renders the dashboard
+as-is (cards laid out on the grid, each showing its viz type + title). Change
+``VIEW_URI`` with the matching value in the tool, and update ``VIEW_PATH`` only
+if you change the frontend build output location.
+"""
+
 from pathlib import Path
 
-from fastmcp.apps import register_resource
+from fastmcp.apps import AppConfig
 
 VIEW_URI = "ui://metabase/index.html"
-RESOURCE_DIR = Path(__file__).parent / "metabase"
+VIEW_PATH = Path(__file__).parent / "dist" / "index.html"
+
+
+def load_view_html() -> str:
+    """Load the compiled UI and explain how to create it when it is missing."""
+    if not VIEW_PATH.is_file():
+        raise RuntimeError(
+            "The MCP App UI has not been built. Run `npm ci` and `npm run build` "
+            "inside app/ui/metabase before starting the server."
+        )
+    return VIEW_PATH.read_text(encoding="utf-8")
 
 
 def register_resource(mcp):
-    """Register the Replicate UI resource paths."""
-    
-    # Register index.html for the root view
-    index_path = RESOURCE_DIR / "index.html"
-    if index_path.exists():
-        mcp.add_resource(VIEW_URI, index_path.read_text(encoding="utf-8"))
-        
-    # Register other static UI files if they exist
-    for file_path in RESOURCE_DIR.glob("*"):
-        if file_path.is_file() and file_path.name != "index.html":
-            resource_uri = f"ui://metabase/{file_path.name}"
-            mcp.add_resource(resource_uri, file_path.read_text(encoding="utf-8"))
+    # This ui:// resource is the HTML document an MCP Apps-capable client
+    # renders when it sees the same URI in get_dashboard_tool's AppConfig.
+    @mcp.resource(VIEW_URI, app=AppConfig())
+    def metabase_dashboard_view():
+        """Return the bundled MCP App UI for the Metabase dashboard viewer."""
+        return load_view_html()
