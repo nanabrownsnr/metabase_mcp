@@ -130,13 +130,17 @@ async def run_sql(
 ) -> dict:
     """Run a native SQL query against a database via /api/dataset.
 
-    Returns the raw Metabase dataset response (columns + rows). The caller is
-    responsible for truncation/row-count reporting.
+    Metabase's /api/dataset expects the SQL nested under a ``native`` object
+    (``{"native": {"query": "<sql>", "parameterized": false}}``) — NOT a
+    top-level ``query`` string. A top-level ``query`` is rejected with a 500.
+    Returns the raw Metabase dataset response (data.columns + data.rows).
     """
     body: dict[str, Any] = {
         "database": database_id,
         "type": "native",
-        "query": sql,
-        "parameters": {},
+        "native": {
+            "query": sql,
+            "parameterized": False,
+        },
     }
     return await _post(base_url, api_key, "/dataset", json_body=body)

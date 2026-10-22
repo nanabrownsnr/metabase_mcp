@@ -67,7 +67,7 @@ async def test_run_sql_success_shape():
     conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
     fake_data = {
         "data": {
-            "cols": [{"name": "account"}, {"name": "total"}],
+            "columns": [{"name": "account"}, {"name": "total"}],
             "rows": [["Cash", 100], ["AR", 200]],
         }
     }
@@ -91,7 +91,7 @@ async def test_run_sql_truncation_flag():
     mcp = _make_mcp()
     conn = {"base_url": "https://mb.test", "api_key": "sk-1"}
     rows = [[i] for i in range(3)]
-    fake_data = {"data": {"cols": [{"name": "x"}], "rows": rows}}
+    fake_data = {"data": {"columns": [{"name": "x"}], "rows": rows}}
     with patch.object(tools_mod, "get_current_connection", new=AsyncMock(return_value=conn)), \
          patch.object(tools_mod, "_run_sql_client", new=AsyncMock(return_value=fake_data)):
         result = await mcp.call_tool("run_sql", {"database_id": 1, "sql": "SELECT 1", "max_rows": 3})

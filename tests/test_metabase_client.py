@@ -131,7 +131,9 @@ async def test_run_sql_posts_dataset():
         body = kwargs["json"]
         assert body["database"] == 1
         assert body["type"] == "native"
-        assert body["query"] == "SELECT 1"
+        # SQL must be nested under native.query (Metabase's /api/dataset shape)
+        assert body["native"]["query"] == "SELECT 1"
+        assert body["native"]["parameterized"] is False
 
 
 @pytest.mark.asyncio

@@ -340,7 +340,9 @@ def register_tools(mcp):
                 conn["base_url"], conn["api_key"], database_id, sql, max_rows
             )
             data = result.get("data", result) if isinstance(result, dict) else result
-            cols_raw = data.get("cols", []) if isinstance(data, dict) else []
+            # Metabase /api/dataset returns {"data": {"columns": [...], "rows": [...]}}
+            # (key is "columns", not "cols").
+            cols_raw = data.get("columns", []) if isinstance(data, dict) else []
             rows = data.get("rows", []) if isinstance(data, dict) else []
             columns = [c.get("name") for c in cols_raw]
             truncated = len(rows) >= max_rows
