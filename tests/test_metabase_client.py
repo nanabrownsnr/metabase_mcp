@@ -9,13 +9,18 @@ import pytest
 
 from app.metabase_client import (
     MetabaseError,
+    add_dashboard_card,
+    create_collection,
+    create_dashboard,
     describe_table,
     get_dashboard,
     health,
     list_databases,
     list_dashboards,
     list_tables,
+    preview_table,
     run_sql,
+    save_question,
     search,
 )
 
@@ -121,7 +126,7 @@ async def test_describe_table_url_and_shape():
 @pytest.mark.asyncio
 async def test_run_sql_posts_dataset():
     cls, client = _mock_client(
-        _ok(200, {"data": {"cols": [{"name": "x"}], "rows": [[1]]}})
+        _ok(200, {"data": {"columns": [{"name": "x"}], "rows": [[1]]}})
     )
     with patch("app.metabase_client.httpx.AsyncClient", cls):
         r = await run_sql(BASE, KEY, 1, "SELECT 1", max_rows=10)
@@ -134,6 +139,72 @@ async def test_run_sql_posts_dataset():
         # SQL must be nested under native.query (Metabase's /api/dataset shape)
         assert body["native"]["query"] == "SELECT 1"
         assert body["native"]["parameterized"] is False
+
+
+@pytest.mark.asyncio
+async def test_save_question_posts_card():
+    cls, client = _mock_client(_ok(200, {"id": 42, "name": "Monthly Revenue"}))
+    with patch("app.metabase_client.httpx.AsyncClient", cls):
+        card = await save_question(BASE, KEY, "Monthly Revenue", 1, "SELECT 1", display="bar")
+        assert card["id"] == 42
+        args, kwargs = client.post.call_args
+        assert args[0].endswith("/api/card")
+        body = kwargs["json"]
+        assert body["name"] == "Monthly Revenue"
+        assert body["display"] == "bar"
+        assert body["database_id"] == 1
+        # Native SQL nested under dataset_query.native
+        assert body["dataset_query"]["type"] == "native"
+        assert body["dataset_query"]["native"]["query"] == "SELECT 1"
+
+
+@pytest.mark.asyncio
+async def test_create_dashboard_posts_dashboard():
+    cls, client = _mock_client(_ok(200, {"id": 7, "name": "Q3 Overview"}))
+    with patch("app.metabase_client.httpx.AsyncClient", cls):
+        dash = await create_dashboard(BASE, KEY, "Q3 Overview", collection_id=5)
+        assert dash["id"] == 7
+        args, kwargs = client.post.call_args
+        assert args[0].endswith("/api/dashboard")
+        assert kwargs["json"]["name"] == "Q3 Overview"
+        assert kwargs["json"]["collection_id"] == 5
+
+
+@pytest.mark.asyncio
+async def test_add_dashboard_card_posts_dashcard():
+    cls, client = _mock_client(_ok(200, {"id": 99, "card_id": 42}))
+    with patch("app.metabase_client.httpx.AsyncClient", cls):
+        placed = await add_dashboard_card(BASE, KEY, 7, 42, viz_type="bar", size=(6, 4))
+        assert placed["card_id"] == 42
+        args, kwargs = client.post.call_args
+        assert args[0].endswith("/api/dashboard/7/card")
+        body = kwargs["json"]
+        assert body["card_id"] == 42
+        assert body["visualization_type"] == "bar"
+        assert body["size"] == [6, 4]
+
+
+@pytest.mark.asyncio
+async def test_create_collection_posts_collection():
+    cls, client = _mock_client(_ok(200, {"id": 5, "name": "Finance"}))
+    with patch("app.metabase_client.httpx.AsyncClient", cls):
+        col = await create_collection(BASE, KEY, "Finance")
+        assert col["id"] == 5
+        args, kwargs = client.post.call_args
+        assert args[0].endswith("/api/collection")
+        assert kwargs["json"]["name"] == "Finance"
+
+
+@pytest.mark.asyncio
+async def test_preview_table_posts_table_query():
+    cls, client = _mock_client(
+        _ok(200, {"data": {"columns": [{"name": "a"}], "rows": [[1], [2]]}})
+    )
+    with patch("app.metabase_client.httpx.AsyncClient", cls):
+        r = await preview_table(BASE, KEY, 42, max_rows=5)
+        assert r["data"]["rows"] == [[1], [2]]
+        args, _ = client.post.call_args
+        assert args[0].endswith("/api/table/42/query")
 
 
 @pytest.mark.asyncio

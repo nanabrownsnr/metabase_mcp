@@ -1,20 +1,28 @@
 """Metabase MCP tools.
 
-Read + query tools over the Metabase API, scoped to the connecting user's
-stored Metabase connection (base_url + api_key).
+Read + query + create-analytics tools over the Metabase API, scoped to the
+connecting user's stored Metabase connection (base_url + api_key).
 
-Every tool returns a ToolResult. A missing/misconfigured connection is returned
-as an actionable error result (status=error), not raised, so the MCP client
-always gets a structured answer.
+Every tool returns a ToolResult. A missing/misconfigured connection is
+returned as an actionable error result (status=error), not raised, so the MCP
+client always gets a structured answer.
 
-Tool set (7):
+Tool set (12):
+  Explore:
   - metabase_search     : search cards/dashboards/collections
   - list_databases_tool : list connected databases
   - list_dashboards_tool: list dashboards (optionally by collection)
-  - get_dashboard_tool  : fetch a dashboard + its cards
+  - get_dashboard_tool  : fetch a dashboard + its cards ("view dashboard")
   - list_tables_tool    : list schemas + tables for a database
   - describe_table_tool : columns + types for a table
+  - preview_table_tool  : sample first N rows of a table
+  Query:
   - run_sql             : run native SQL via /api/dataset (raw querying power)
+  Create-analytics:
+  - save_question_tool  : persist a SQL query as a saved question (card)
+  - create_dashboard_tool : create a new dashboard
+  - add_dashboard_card_tool : place a saved question on a dashboard
+  - create_collection_tool  : create a folder (collection)
 """
 
 from typing import Any, Dict, List, Optional
@@ -24,11 +32,16 @@ from fastmcp.tools import ToolResult
 
 from app.metabase_client import (
     MetabaseError,
+    add_dashboard_card,
+    create_collection,
+    create_dashboard as _create_dashboard_client,
     describe_table,
     get_dashboard,
     list_databases,
     list_dashboards,
     list_tables,
+    preview_table,
+    save_question,
     search,
 )
 from app.metabase_client import run_sql as _run_sql_client
@@ -369,3 +382,242 @@ def register_tools(mcp):
             )
         except MetabaseError as e:
             return _error_result(f"SQL query failed: {e}", e.status_code)
+
+    @mcp.tool(app=_app_config())
+    async def preview_table_tool(table_id: int, max_rows: int = 10) -> ToolResult:
+        """Sample the first N rows of a table to understand its data shape.
+
+        Useful before writing SQL: see actual values, not just column names.
+
+        Args:
+            table_id: The Metabase table id (from list_tables_tool).
+            max_rows: Maximum rows to return (default 10).
+
+        Returns:
+            A ToolResult with the table's columns and sample rows.
+
+        Examples:
+            ``preview_table_tool(table_id=42, max_rows=5)``
+        """
+        try:
+            conn = await _connection()
+            if conn is None:
+                return _no_connection_result()
+            result = await preview_table(conn["base_url"], conn["api_key"], table_id, max_rows)
+            data = result.get("data", result) if isinstance(result, dict) else result
+            cols_raw = data.get("columns", []) if isinstance(data, dict) else []
+            rows = data.get("rows", []) if isinstance(data, dict) else []
+            rows = rows[:max_rows]
+            columns = [c.get("name") for c in cols_raw]
+            return ToolResult(
+                content=f"Preview of table {table_id}: {len(rows)} sample rows, columns: {columns}.",
+                structured_content={
+                    "status": "success",
+                    "table_id": table_id,
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows),
+                },
+                meta=_meta(),
+            )
+        except MetabaseError as e:
+            return _error_result(f"Failed to preview table {table_id}: {e}", e.status_code)
+
+    @mcp.tool(app=_app_config())
+    async def save_question_tool(
+        name: str,
+        database_id: int,
+        sql: str,
+        collection_id: Optional[int] = None,
+        display: str = "table",
+        description: Optional[str] = None,
+    ) -> ToolResult:
+        """Save a SQL query as a reusable saved question (card) in Metabase.
+
+        This is the "I like this query, keep it" flow. The saved question can
+        be added to a dashboard (add_dashboard_card_tool) or run later.
+        Requires the connecting user's Metabase API key to have write
+        permission on the database.
+
+        Args:
+            name: The question's title (shown in Metabase).
+            database_id: The Metabase database id the SQL runs against.
+            sql: The native SQL to save (SELECT recommended).
+            collection_id: Optional folder id to save it in (default: personal).
+            display: Visualization type: table, bar, line, pie, scatter, area,
+                gauge, row, combo, pivot, scalar, smartscalar, progress, funnel,
+                map, waterfall, sankey. Default "table".
+            description: Optional one-line description of what the question
+                answers.
+
+        Returns:
+            A ToolResult with the saved question's id and name (use the id with
+            add_dashboard_card_tool).
+
+        Examples:
+            ``save_question_tool(name="Monthly Revenue", database_id=1, sql="SELECT month, SUM(amount) FROM sales GROUP BY month", display="bar")``
+        """
+        try:
+            conn = await _connection()
+            if conn is None:
+                return _no_connection_result()
+            card = await save_question(
+                conn["base_url"], conn["api_key"],
+                name=name, database_id=database_id, sql=sql,
+                collection_id=collection_id, display=display,
+                description=description,
+            )
+            return ToolResult(
+                content=f"Saved question '{name}' (id={card.get('id')}, display={display}).",
+                structured_content={
+                    "status": "success",
+                    "card_id": card.get("id"),
+                    "name": name,
+                    "display": display,
+                    "database_id": database_id,
+                    "collection_id": collection_id,
+                    "url": card.get("url"),
+                },
+                meta=_meta(),
+            )
+        except MetabaseError as e:
+            return _error_result(f"Failed to save question: {e}", e.status_code)
+
+    @mcp.tool(app=_app_config())
+    async def create_dashboard_tool(
+        name: str,
+        collection_id: Optional[int] = None,
+        description: Optional[str] = None,
+    ) -> ToolResult:
+        """Create a new (empty) dashboard in Metabase.
+
+        Follow up with add_dashboard_card_tool to place saved questions on it.
+        Requires the connecting user's Metabase API key to have write
+        permission.
+
+        Args:
+            name: The dashboard's title.
+            collection_id: Optional folder id to create it in (default: personal).
+            description: Optional description.
+
+        Returns:
+            A ToolResult with the new dashboard's id and name (use the id with
+            add_dashboard_card_tool).
+
+        Examples:
+            ``create_dashboard_tool(name="Q3 Finance Overview", collection_id=5)``
+        """
+        try:
+            conn = await _connection()
+            if conn is None:
+                return _no_connection_result()
+            dash = await _create_dashboard_client(
+                conn["base_url"], conn["api_key"],
+                name=name, collection_id=collection_id, description=description,
+            )
+            return ToolResult(
+                content=f"Created dashboard '{name}' (id={dash.get('id')}).",
+                structured_content={
+                    "status": "success",
+                    "dashboard_id": dash.get("id"),
+                    "name": name,
+                    "collection_id": collection_id,
+                    "url": dash.get("url"),
+                },
+                meta=_meta(),
+            )
+        except MetabaseError as e:
+            return _error_result(f"Failed to create dashboard: {e}", e.status_code)
+
+    @mcp.tool(app=_app_config())
+    async def add_dashboard_card_tool(
+        dashboard_id: int,
+        card_id: int,
+        viz_type: str = "table",
+        col_span: int = 6,
+        row_span: int = 4,
+    ) -> ToolResult:
+        """Place a saved question onto a dashboard as a chart.
+
+        Args:
+            dashboard_id: The dashboard id (from create_dashboard_tool or
+                list_dashboards_tool).
+            card_id: The saved question id (from save_question_tool or
+                metabase_search).
+            viz_type: Visualization type: table, bar, line, pie, scatter, area,
+                gauge, row, combo, pivot, scalar, smartscalar, progress, funnel,
+                map, waterfall, sankey. Default "table".
+            col_span: Width in grid units (dashboard is 12 units wide).
+                Default 6 (half width).
+            row_span: Height in grid units. Default 4.
+
+        Returns:
+            A ToolResult with the placed card's id and position.
+
+        Examples:
+            ``add_dashboard_card_tool(dashboard_id=7, card_id=42, viz_type="bar", col_span=6, row_span=4)``
+        """
+        try:
+            conn = await _connection()
+            if conn is None:
+                return _no_connection_result()
+            placed = await add_dashboard_card(
+                conn["base_url"], conn["api_key"],
+                dashboard_id=dashboard_id, card_id=card_id,
+                viz_type=viz_type, size=(col_span, row_span),
+            )
+            return ToolResult(
+                content=f"Added card {card_id} to dashboard {dashboard_id} as {viz_type} ({col_span}x{row_span}).",
+                structured_content={
+                    "status": "success",
+                    "dashboard_id": dashboard_id,
+                    "card_id": card_id,
+                    "dashboard_card_id": placed.get("id") if isinstance(placed, dict) else None,
+                    "viz_type": viz_type,
+                    "size": [col_span, row_span],
+                },
+                meta=_meta(),
+            )
+        except MetabaseError as e:
+            return _error_result(f"Failed to add card to dashboard: {e}", e.status_code)
+
+    @mcp.tool(app=_app_config())
+    async def create_collection_tool(
+        name: str,
+        parent_id: Optional[int] = None,
+    ) -> ToolResult:
+        """Create a new collection (folder) in Metabase to organize content.
+
+        Use it to group related questions and dashboards.
+
+        Args:
+            name: The folder's name.
+            parent_id: Optional parent folder id to nest it under (default: top-level).
+
+        Returns:
+            A ToolResult with the new collection's id (use it as collection_id
+            in save_question_tool / create_dashboard_tool).
+
+        Examples:
+            ``create_collection_tool(name="Finance")``
+        """
+        try:
+            conn = await _connection()
+            if conn is None:
+                return _no_connection_result()
+            col = await create_collection(
+                conn["base_url"], conn["api_key"],
+                name=name, parent_id=parent_id,
+            )
+            return ToolResult(
+                content=f"Created collection '{name}' (id={col.get('id')}).",
+                structured_content={
+                    "status": "success",
+                    "collection_id": col.get("id"),
+                    "name": name,
+                    "parent_id": parent_id,
+                },
+                meta=_meta(),
+            )
+        except MetabaseError as e:
+            return _error_result(f"Failed to create collection: {e}", e.status_code)

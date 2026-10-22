@@ -24,12 +24,17 @@ EXPECTED_TOOLS = {
     "get_dashboard_tool",
     "list_tables_tool",
     "describe_table_tool",
+    "preview_table_tool",
     "run_sql",
+    "save_question_tool",
+    "create_dashboard_tool",
+    "add_dashboard_card_tool",
+    "create_collection_tool",
 }
 
 
 @pytest.mark.asyncio
-async def test_exposes_exactly_seven_tools():
+async def test_exposes_expected_tools():
     mcp = _make_mcp()
     tools = await mcp.list_tools()
     names = {t.name for t in tools}
