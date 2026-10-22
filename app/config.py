@@ -52,7 +52,10 @@ def configure_logging():
 
 
 class Settings(BaseSettings):
-    SERVICE_ID: str = f"{configured_mcp_name()}_mcp"
+    # Must match the audience Twynity adds to user JWTs for this service.
+    # Twynity registers MCP audiences in hyphenated form (e.g. "metabase-mcp"),
+    # so use a hyphen — NOT the template's underscore default.
+    SERVICE_ID: str = f"{configured_mcp_name()}-mcp"
     APP_TITLE: str = f"{configured_mcp_name().title()} MCP"
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")  # development | staging | production

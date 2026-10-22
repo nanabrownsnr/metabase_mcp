@@ -80,13 +80,24 @@ async def get_identity_from_headers(headers: Mapping[str, str]) -> TwynityIdenti
             response.raise_for_status()
         header = jwt.get_unverified_header(token)
         key = next(key for key in response.json()["keys"] if key.get("kid") == header.get("kid"))
-        # No audience check: Twynity signs user JWTs for the platform, not per
-        # service. The transport JWTVerifier (get_auth_provider) also omits
-        # audience, so custom routes must match or they 401 on valid tokens.
+        # Audience check matches the transport JWTVerifier (get_auth_provider):
+        # both require the token's aud to include SERVICE_ID (e.g. "metabase-mcp").
+        # Twynity adds this audience to user JWTs when the MCP is registered.
         claims = jwt.decode(
-            token, key, algorithms=["RS256"]
+            token, key, algorithms=["RS256"], audience=settings.SERVICE_ID
         )
     except (httpx.HTTPError, KeyError, StopIteration, JWTError, ValueError) as exc:
+        # Log the real cause (signature, audience, JWKS fetch, or kid lookup)
+        # so deployment logs diagnose 401s without guessing. The client only
+        # sees the generic message; the detail lives in the server log.
+        import logging
+        logging.getLogger(__name__).warning(
+            "JWT verification failed for kid=%s service=%s: %s: %s",
+            jwt.get_unverified_header(token).get("kid") if token else "?",
+            settings.SERVICE_ID,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=401, detail="Twynity bearer token could not be verified") from exc
 
     user_id = claims.get("id") or claims.get("sub")
