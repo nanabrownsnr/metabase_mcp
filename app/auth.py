@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import httpx
 from fastmcp.server.auth.providers.jwt import JWTVerifier
+from fastmcp.server.dependencies import get_access_token, get_http_headers
 from jose import JWTError, jwt
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -103,5 +104,33 @@ async def get_identity_from_headers(headers: Mapping[str, str]) -> TwynityIdenti
     user_id = claims.get("id") or claims.get("sub")
     if not isinstance(user_id, str) or not user_id.strip():
         raise HTTPException(status_code=401, detail="Verified token has no user identity claim")
+    persona_id = persona_id.strip() if isinstance(persona_id, str) and persona_id.strip() else None
+    return TwynityIdentity(user_id=user_id, persona_id=persona_id)
+
+
+async def get_identity_from_context() -> TwynityIdentity:
+    """Resolve identity from FastMCP's verified request context (MCP transport).
+
+    Use this from MCP *tools* (not custom routes). The transport ``JWTVerifier``
+    has already verified the bearer token and published it via
+    ``get_access_token()`` — so we read the decoded claims directly instead of
+    re-fetching JWKS and re-verifying. That also sidesteps FastMCP stripping the
+    ``authorization`` header from ``get_http_headers()`` (which would make a
+    header-based re-verification 401 on every tool call).
+
+    ``Persona-Id`` is still read from the request headers (it is *not* among the
+    stripped headers), so connection scoping works exactly as before. A valid
+    token is always required; ``persona_id`` is optional here.
+    """
+    access_token = get_access_token()
+    if access_token is None:
+        raise HTTPException(status_code=401, detail="A valid Twynity bearer token is required")
+
+    claims = getattr(access_token, "claims", None) or {}
+    user_id = claims.get("id") or claims.get("sub")
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise HTTPException(status_code=401, detail="Verified token has no user identity claim")
+
+    persona_id = get_http_headers().get(settings.PERSONA_ID_HEADER.lower())
     persona_id = persona_id.strip() if isinstance(persona_id, str) and persona_id.strip() else None
     return TwynityIdentity(user_id=user_id, persona_id=persona_id)

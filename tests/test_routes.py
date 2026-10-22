@@ -64,7 +64,7 @@ def client():
         persona_id = "p1"
 
     # twynity.py imports get_identity_require_persona by name for the
-    # connection routes; tools/connection.py imports get_identity_from_headers.
+    # connection routes; tools/connection.py imports get_identity_from_context (MCP transport path).
     # Patch the references in those modules (not just the source module).
     with patch.object(twynity_mod, "get_active_store", return_value=store), \
          patch.object(conn_mod, "get_active_store", return_value=store), \
