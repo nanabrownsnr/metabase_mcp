@@ -29,7 +29,7 @@ def get_auth_provider() -> JWTVerifier:
         f"{settings.ACCOUNT_SERVICE_URL.rstrip('/')}"
         f"/{settings.ACCOUNT_SERVICE_JWKS_ENDPOINT.lstrip('/')}"
     )
-    return JWTVerifier(jwks_uri=jwks_url, algorithm="RS256")
+    return JWTVerifier(jwks_uri=jwks_url, algorithm="RS256", audience=settings.SERVICE_ID)
 
 
 async def get_identity(request: Request) -> TwynityIdentity:
